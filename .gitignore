@@ -1,5 +1,4 @@
 # 本地环境 / 工具元数据
-.workbuddy/
 .venv/
 venv/
 __pycache__/

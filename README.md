@@ -15,19 +15,11 @@
 
 ## 安装
 
-Skill 是「一个文件夹 + 一份 `SKILL.md`」的通用格式，放对目录即可被识别：
-
-| 工具 | 安装目录 |
-| --- | --- |
-| WorkBuddy | `~/.workbuddy/skills/courseware-pdf-to-notes/` |
-| Claude Code | `~/.claude/skills/courseware-pdf-to-notes/` |
-| Codex | `~/.codex/skills/courseware-pdf-to-notes/` |
+Skill 是「一个文件夹 + 一份 `SKILL.md`」的通用格式。把本仓库整个文件夹复制进你所用的 AI 助手的 **skills 目录**即可 —— 该目录通常形如 `<助手配置目录>/skills/`：
 
 ```bash
 git clone https://github.com/XLJFZ/courseware-pdf-to-notes.git
-# 以 WorkBuddy 为例（Windows: %USERPROFILE%\.workbuddy\skills\）
-mkdir -p ~/.workbuddy/skills
-cp -r courseware-pdf-to-notes ~/.workbuddy/skills/
+cp -r courseware-pdf-to-notes <助手配置目录>/skills/
 ```
 
 > 也可以直接把 `SKILL.md` 的内容贴给 AI 当提示词用，不装 Skill 同样能跑。
@@ -59,7 +51,7 @@ cp -r courseware-pdf-to-notes ~/.workbuddy/skills/
 
 - **Python 3.10+**，以及 [`pymupdf`](https://pypi.org/project/pymupdf/)（PDF 抽文字与按页渲染）
 - 笔记落点：**Obsidian** vault（任意路径；Skill 不写死路径）
-- 读图核对依赖助手的**多模态看图能力**（WorkBuddy / Claude 等均支持直接读 PNG）
+- 读图核对依赖助手的**多模态看图能力**（能直接读 PNG 的 AI 助手即可）
 
 ```bash
 python -m venv .venv
