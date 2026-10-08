@@ -1,0 +1,13 @@
+# 本地环境 / 工具元数据
+.workbuddy/
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+.idea/
+.vscode/
+.DS_Store
+
+# 中间产物
+_tmp/
+*.log
