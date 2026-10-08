@@ -95,6 +95,9 @@ print("前", n, "页首个差异页:", first, "| 新增页:", f"{n+1}-{b.page_co
 ```
 `first is None` ⇒ 旧文件是新文件的前缀，**只处理 `n+1` 到末页**，前面全部复用已有笔记与配图。
 
+> 随附脚本 `scripts/pdfdiff.py` 已封装这一步（含下方的相似度分类），可直接跑：
+> `python scripts/pdfdiff.py OLD.pdf NEW.pdf --dump-text out.txt`
+
 **别把"改字"当成新页**：超集版本里常见"修拼写/改日期"的微改。用相似度把两类差异分开：
 
 ```python
@@ -198,23 +201,43 @@ doc[pno-1].get_pixmap(matrix=pymupdf.Matrix(4, 4),
 
 ## 第 5 步：校验 + 清理
 
-跑一个校验脚本，确认**每个图片嵌入和 wikilink 都能落地**：
-- 解析 `![[assets/xxx.png]]` 是否对应真实文件；
-- 解析 `[[笔记名]]`（跳过 `assets/` 前缀）是否在全 vault 的 md 文件名集合里；
-- 注意表格里为了转义写的是 `\|`，正则捕获后要 `rstrip("\\")`，否则会误报一堆"缺失"。
+用随附的 `scripts/checklinks.py` 校验**每个图片嵌入和 wikilink 都能落地**：
 
-再跑清理：**列出所有 `slide-*.png` 中未被任何笔记引用的**，交给 Python 删除（白名单：只允许 `slide-` 前缀 + `.png` 后缀）。
+```bash
+python scripts/checklinks.py --vault "<vault 根目录>" --notes "<学科目录>"
+```
+
+它会检查 `![[assets/xxx.png]]` 能否按后缀**唯一**命中真实文件、`[[笔记名]]` 是否在全 vault 的 md 文件名集合里。**注意表格里为转义写的是 `\|`，正则捕获后要 `rstrip("\\")`，否则会误报一堆「缺失」。**
+
+再用 `scripts/orphan_assets.py` 清理孤儿配图（**默认只列出，加 `--delete` 才真删**）：
+
+```bash
+python scripts/orphan_assets.py --notes "<学科目录>" --assets "<学科目录>/assets"
+python scripts/orphan_assets.py --notes "<学科目录>" --assets "<学科目录>/assets" --delete
+```
+
+删除带白名单护栏（只允许 `slide-` 前缀 + `.png` 后缀），避免误删手绘 SVG 或教材插图。
 
 最后写记忆：把新增笔记、配图增量、脚本路径变更、以及"待办 = 下一个 Part"记进项目日志与长期记忆。
 
+## 随附脚本（`scripts/`）
+
+| 脚本 | 作用 |
+| --- | --- |
+| `pdfdiff.py` | 逐页比对两份 PDF，定位新增页范围；用相似度把「改字」与「内容重做」分开 |
+| `checklinks.py` | 校验笔记里的 `![[嵌入]]` 与 `[[wikilink]]` 能否解析 |
+| `orphan_assets.py` | 列出 / 删除 assets 里未被任何笔记引用的孤儿图（默认只列出） |
+
+三个脚本都用 `argparse` 传路径、无硬编码路径；`pdfdiff.py` 需要 `pymupdf`。用法见各自 `--help`。
+
 ## 复用清单（又一份课件来了照做）
 
-1. **判断关系**：新 PDF 是不是已有 PDF 的超集？是 → 用"增量定位"只取新增页（`_pdfdiff.py` 可照抄）
+1. **判断关系**：`python scripts/pdfdiff.py OLD.pdf NEW.pdf` → 是超集就只取新增页
 2. `_slideexport<pN>.py` 换 SRC + 页表 → 导关键页（跳过重复页）
 3. **批量渲染新增页到一个临时目录，逐页 `Read` 核对**每个公式/数值/箭头方向；小图用 4–6× 裁剪放大重读
 4. **决定落点**：独立主题 → 新建 `0X - <主要内容>.md`（横线后写主题关键词，别只写 Part N）；同主题后续 → **并入已有那篇**（见第 0 步的"同主题"提示）
 5. 写/改笔记（大改结构用 `Write` 整篇重写）：修订 H1、`source`、大纲表、`归档说明` callout；例题**只给题面不给解答的按模板补全并标 🔶**
 6. 更新 MOC：讲义表格行、配图统计（文件数 / MB / 三类别数量）
-7. 跑链接校验 + 孤儿 `slide-*.png` 清理
+7. `python scripts/checklinks.py …` + `python scripts/orphan_assets.py …`
 8. 追加当日日志；环境/约定有变再更新长期记忆
 9. 交付：把改动的笔记 + MOC 一起给用户

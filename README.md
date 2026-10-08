@@ -58,11 +58,33 @@ python -m venv .venv
 .venv/Scripts/python.exe -m pip install pymupdf   # Linux/macOS: .venv/bin/pip install pymupdf
 ```
 
+## 随附脚本
+
+`scripts/` 下三个命令行工具，把工作流里最机械的几步自动化（均用 `argparse` 传路径、无硬编码路径）：
+
+| 脚本 | 作用 |
+| --- | --- |
+| `pdfdiff.py` | 逐页比对两份 PDF，定位新增页范围；用文本相似度把「改字」与「内容重做」分开 |
+| `checklinks.py` | 校验笔记里的 `![[嵌入]]` 与 `[[wikilink]]` 能否解析 |
+| `orphan_assets.py` | 列出 / 删除 assets 里未被任何笔记引用的孤儿图（默认只列出，`--delete` 才删） |
+
+```bash
+python scripts/pdfdiff.py OLD.pdf NEW.pdf --dump-text out.txt
+python scripts/checklinks.py --vault "<vault 根目录>" --notes "<学科目录>"
+python scripts/orphan_assets.py --notes "<学科目录>" --assets "<学科目录>/assets"
+```
+
+> 不装 Skill 也能单独用这三个脚本——它们只依赖 `pymupdf` 与 Python 标准库。
+
 ## 仓库结构
 
 ```
 courseware-pdf-to-notes/
 ├── SKILL.md          # Skill 本体（元数据 + 完整工作流）
+├── scripts/          # 随附命令行工具
+│   ├── pdfdiff.py
+│   ├── checklinks.py
+│   └── orphan_assets.py
 ├── README.md         # 本文件
 ├── LICENSE           # MIT
 ├── .gitignore
