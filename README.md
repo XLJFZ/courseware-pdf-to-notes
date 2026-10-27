@@ -65,7 +65,7 @@ python -m venv .venv
 | 脚本 | 作用 |
 | --- | --- |
 | `pdfdiff.py` | 逐页比对两份 PDF，定位新增页范围；用文本相似度把「改字」与「内容重做」分开 |
-| `checklinks.py` | 校验笔记里的 `![[嵌入]]` 与 `[[wikilink]]` 能否解析 |
+| `checklinks.py` | 校验 `![[嵌入]]` 与 `[[wikilink]]`；自动排除代码块与公式里的 `[[`，并把「真失效」与「路径过期」分开报 |
 | `orphan_assets.py` | 列出 / 删除 assets 里未被任何笔记引用的孤儿图（默认只列出，`--delete` 才删） |
 
 ```bash
