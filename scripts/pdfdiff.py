@@ -1,82 +1,87 @@
 #!/usr/bin/env python3
-# -*- coding: utf-8 -*-
-"""逐页比对两份 PDF，定位新增页范围，并用文本相似度区分「改字」与「内容重做」。
-
-为什么需要它：课件 PDF 常出现「超集版本」——新文件是旧文件的前缀 + 若干新增页。
-逐页比文字即可定位分界点，避免整份重做。但超集版里也常混着拼写/日期微改，
-这类差异相似度极高（≥ 0.99），**不应触发重导图或改笔记**，所以要用相似度把两类分开。
-
-用法:
-    python pdfdiff.py OLD.pdf NEW.pdf
-    python pdfdiff.py OLD.pdf NEW.pdf --dump-text out.txt
-    python pdfdiff.py OLD.pdf NEW.pdf --min-ratio 0.98
-
-依赖: pymupdf
-"""
+"""逐页比较文本和 2× 渲染图；相似度仅用于安排复核，不证明内容等价。"""
 import argparse
 import difflib
+import hashlib
 import re
 import sys
 
 try:
     import pymupdf
 except ImportError:
-    sys.exit("缺少依赖，请先安装： python -m pip install pymupdf")
+    sys.exit("缺少依赖，请先安装：python -m pip install pymupdf")
 
 
 def load_pages(path):
-    """返回每页的文字层（已 strip）。注意：公式与图片里的数字抽不出来，属正常。"""
     with pymupdf.open(path) as doc:
         return [page.get_text("text").strip() for page in doc]
 
 
+def visual_hash(page):
+    # 每次只保留单页像素，避免整本 PDF 图像常驻内存。
+    pix = page.get_pixmap(matrix=pymupdf.Matrix(2, 2), alpha=False)
+    return (pix.width, pix.height, hashlib.sha256(pix.samples).digest())
+
+
+def critical_tokens(text):
+    return re.findall(r"\d+(?:\.\d+)?|[+−–\-±×÷=<>≤≥∑√^]|\b(?:mm|cm|km|m|s|kg|g|N|kN|Pa|kPa|MPa|J|W|V|A|Hz)\b", text)
+
+
+def compare_pages(old, new, min_ratio=0.99):
+    rows = []
+    for i in range(min(len(old), len(new))):
+        a, b = old[i], new[i]
+        ta, tb = a.get_text("text").strip(), b.get_text("text").strip()
+        na, nb = re.sub(r"\s+", "", ta), re.sub(r"\s+", "", tb)
+        visual_changed = visual_hash(a) != visual_hash(b)
+        if not ta or not tb:
+            kind = "无文字/空文字页，需视觉核对"
+        elif critical_tokens(ta) != critical_tokens(tb):
+            kind = "数字/单位/运算符变化，必须复核"
+        elif na != nb:
+            ratio = difflib.SequenceMatcher(None, na, nb, autojunk=False).ratio()
+            kind = "高相似度文字变化，仍需复核" if ratio >= min_ratio else "文字内容变化，需复核"
+        elif visual_changed:
+            kind = "文字相同但渲染变化，需视觉核对"
+        else:
+            continue
+        rows.append((i + 1, kind))
+    return rows
+
+
 def main():
-    ap = argparse.ArgumentParser(
-        description="逐页比对两份 PDF，定位新增页范围（用相似度区分改字 / 重做）"
-    )
-    ap.add_argument("old", help="旧 PDF")
-    ap.add_argument("new", help="新 PDF（通常是旧文件的超集）")
-    ap.add_argument("--min-ratio", type=float, default=0.99,
-                    help="相似度门槛：>= 该值视为「改字」，否则视为「内容重做」（默认 0.99）")
-    ap.add_argument("--dump-text", metavar="OUT",
-                    help="把新 PDF 的文字层写到 OUT，便于通读结构")
-    ap.add_argument("--max-list", type=int, default=20, help="每类最多列出多少页（默认 20）")
+    ap = argparse.ArgumentParser(description=__doc__)
+    ap.add_argument("old")
+    ap.add_argument("new")
+    ap.add_argument("--min-ratio", type=float, default=0.99)
+    ap.add_argument("--max-list", type=int, default=20)
+    ap.add_argument("--dump-text", metavar="OUT")
     args = ap.parse_args()
-
-    old, new = load_pages(args.old), load_pages(args.new)
-    print("old pages: %d | new pages: %d" % (len(old), len(new)))
-
-    if args.dump_text:
-        with open(args.dump_text, "w", encoding="utf-8") as f:
-            f.write("### pages=%d\n" % len(new))
-            for i, t in enumerate(new):
-                f.write("\n===== PAGE %d =====\n%s" % (i + 1, t.rstrip()))
-        print("文字层已写入:", args.dump_text)
-
-    n = min(len(old), len(new))
-    norm = lambda s: re.sub(r"\s+", "", s)   # 忽略空白差异，避免排版微调被当成内容改动
-
-    first, typos, rewrites = None, [], []
-    for i in range(n):
-        if old[i] != new[i]:
-            ratio = difflib.SequenceMatcher(None, norm(old[i]), norm(new[i])).ratio()
-            (typos if ratio >= args.min_ratio else rewrites).append((i + 1, ratio))
-            if first is None:
-                first = i + 1
-
-    if first is None:
-        print("前 %d 页逐页文字完全一致" % n)
-    else:
-        print("首个差异页: %d" % first)
-        fmt = lambda seq: ", ".join("p%d(%.3f)" % (p, r) for p, r in seq[:args.max_list])
-        print("  改字 %d 页: %s" % (len(typos), fmt(typos) or "-"))
-        print("  重做 %d 页: %s" % (len(rewrites), fmt(rewrites) or "-"))
-        print("  → 只有「重做」的页需要回看渲染图重新整理；「改字」页原样复用即可")
-
-    if len(new) > n:
-        print("新增页: p%d–p%d（共 %d 页）" % (n + 1, len(new), len(new) - n))
-    elif len(old) > len(new):
-        print("提示: 旧文件比新文件多 %d 页" % (len(old) - len(new)))
+    if not 0 <= args.min_ratio <= 1 or args.max_list < 1:
+        ap.error("--min-ratio 必须在 0–1，--max-list 必须大于 0")
+    with pymupdf.open(args.old) as old, pymupdf.open(args.new) as new:
+        print("old pages: %d | new pages: %d" % (len(old), len(new)))
+        if not len(old) or not len(new):
+            ap.error("PDF 没有页面")
+        rows = compare_pages(old, new, args.min_ratio)
+        if args.dump_text:
+            with open(args.dump_text, "w", encoding="utf-8") as f:
+                f.write("### pages=%d\n" % len(new))
+                for i, page in enumerate(new):
+                    f.write("\n===== PAGE %d =====\n%s" % (i + 1, page.get_text("text").rstrip()))
+        if rows:
+            print("需复核 %d 页：" % len(rows))
+            for number, kind in rows[:args.max_list]:
+                print("  p%d: %s" % (number, kind))
+            if len(rows) > args.max_list:
+                print("  其余 %d 页未列出，可增大 --max-list" % (len(rows) - args.max_list))
+        else:
+            print("前 %d 页文本及 2× 渲染一致" % min(len(old), len(new)))
+        if len(new) > len(old):
+            print("尾部候选新增页: p%d–p%d（仅在前缀确认一致后才可仅处理此范围）" % (len(old) + 1, len(new)))
+        elif len(old) > len(new):
+            print("新 PDF 少 %d 页，需核对删页/重排" % (len(old) - len(new)))
+        print("按相同页号比较；插页、删页、重排需人工确认，不自动判定超集。")
 
 
 if __name__ == "__main__":

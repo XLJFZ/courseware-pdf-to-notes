@@ -11,7 +11,7 @@ description: 把课程课件 / 讲义 / PPT 导出的 PDF 转成（或补进）O
 
 1. **课件覆盖到哪**：读 PDF 的目录 / Outline 页 / 封面页，搞清覆盖了哪几讲、对应教材哪几节。
 2. **现有笔记是什么结构**：`Glob` 目标目录，看清已有笔记的编号、标题、以及**是不是脚本产出的**。
-3. **新课件是不是旧课件的超集**：`课件/` 里出现 `part 1 & 2 complete.pdf` 这类名字时，**先跟已有的 `part 1 & 2.pdf` 逐页比文字**，只处理新增页（见下方"增量定位"）。别整份重做。
+3. **新课件是不是旧课件的超集**：`课件/` 里出现 `part 1 & 2 complete.pdf` 这类名字时，先用 `scripts/pdfdiff.py` 比较文本和渲染图，核对前缀及页序。确认是超集后只处理新增页（见下方“增量定位”）。
 
 > [!important] 同主题的后续课件：并入已有讲义，不新开 0X
 > `0X` 编号只给**独立主题**的讲义。如果新课件与某一讲**同属一个主题**（且前半段本身是复习），要的是**把新内容并进那一篇**，不是新建号。
@@ -93,12 +93,12 @@ first = next((i + 1 for i in range(n)
               if a[i].get_text().strip() != b[i].get_text().strip()), None)
 print("前", n, "页首个差异页:", first, "| 新增页:", f"{n+1}-{b.page_count}")
 ```
-`first is None` ⇒ 旧文件是新文件的前缀，**只处理 `n+1` 到末页**，前面全部复用已有笔记与配图。
+`first is None` 只能说明前 n 页文字相同，不能证明图片、公式或箭头一致。必须继续用 `scripts/pdfdiff.py` 比较渲染图；空文字页需看图核对。只有确认前缀一致、且没有插页/删页/重排，才能只处理尾部新增页。
 
 > 随附脚本 `scripts/pdfdiff.py` 已封装这一步（含下方的相似度分类），可直接跑：
 > `python scripts/pdfdiff.py OLD.pdf NEW.pdf --dump-text out.txt`
 
-**别把"改字"当成新页**：超集版本里常见"修拼写/改日期"的微改。用相似度把两类差异分开：
+**相似度只用于安排复核**：超集版本里常见修拼写或改日期，但只改一个数字或正负号也可能具有极高相似度。下面的文字比较不能替代渲染核对：
 
 ```python
 import re, difflib
@@ -106,9 +106,9 @@ norm = lambda s: re.sub(r"\s+", "", s)
 for i in range(n):
     if norm(ta[i]) != norm(tb[i]):
         r = difflib.SequenceMatcher(None, norm(ta[i]), norm(tb[i])).ratio()
-        print(f"p{i+1}: similarity={r:.4f}")   # ≥0.99 ⇒ 改字；低 ⇒ 内容重做
+        print(f"p{i+1}: similarity={r:.4f}")   # 仅安排复核顺序，不能直接判断可复用
 ```
-实例：一份 212 页课件 vs 256 页新版，前 212 页只有 3 页不同，且 diff 全是 `'' -> 'c'`（`vetors`→`vectors`）——这种情况**不要重导图、不要改笔记**，只在笔记里注明源文件已升级即可。
+实例：一份 212 页课件 vs 256 页新版，前 212 页只有 3 页不同，且 diff 全是 `'' -> 'c'`（`vetors`→`vectors`）——这种情况仍需确认差异确实只涉及拼写；数字、单位、符号或渲染图发生变化时，必须回看原页。确认不影响内容后，再复用已有笔记与配图。
 
 判断某页"有没有可抽的文字"用一句探查就够：
 ```python
@@ -209,7 +209,7 @@ python scripts/checklinks.py --vault "<vault 根目录>" --notes "<学科目录>
 python scripts/checklinks.py --vault "<vault 根目录>" --exclude _备份
 ```
 
-它会检查 `![[assets/xxx.png]]` 能否按后缀**唯一**命中真实文件、`[[笔记名]]` 是否在全 vault 的 md 文件名集合里。**注意表格里为转义写的是 `\|`，正则捕获后要 `rstrip("\\")`，否则会误报一堆「缺失」。**
+它会检查 `![[assets/xxx.png]]` 能否按后缀**唯一**命中真实文件；带目录的笔记链接必须匹配 vault 路径或相对当前笔记的路径，不能仅凭同名文件通过。无路径的同名笔记会提示歧义。不存在的输入目录或零篇待检笔记会报错，回收站文件不作为有效目标。**注意表格里为转义写的是 `\|`，正则捕获后要 `rstrip("\\")`，否则会误报一堆「缺失」。**
 
 输出分三档，别混着看：
 - `UNRESOLVED` → 真失效，必须修（退出码非 0）
@@ -235,7 +235,7 @@ python scripts/orphan_assets.py --notes "<学科目录>" --assets "<学科目录
 
 | 脚本 | 作用 |
 | --- | --- |
-| `pdfdiff.py` | 逐页比对两份 PDF，定位新增页范围；用相似度把「改字」与「内容重做」分开 |
+| `pdfdiff.py` | 逐页比对两份 PDF，定位新增页范围；比较文本与 2× 渲染；提示关键字符变化、空文字页和待复核页面 |
 | `checklinks.py` | 校验 `![[嵌入]]` 与 `[[wikilink]]`；排除代码块/公式里的 `[[`，区分真失效与路径过期 |
 | `orphan_assets.py` | 列出 / 删除 assets 里未被任何笔记引用的孤儿图（默认只列出） |
 
@@ -243,7 +243,7 @@ python scripts/orphan_assets.py --notes "<学科目录>" --assets "<学科目录
 
 ## 复用清单（又一份课件来了照做）
 
-1. **判断关系**：`python scripts/pdfdiff.py OLD.pdf NEW.pdf` → 是超集就只取新增页
+1. **判断关系**：`python scripts/pdfdiff.py OLD.pdf NEW.pdf` → 仅在文字与渲染核对确认前缀一致后只取新增页
 2. 用「页表 → 导出配图」脚本（自备，二十来行）换上新的 `SRC` 与页表 → 导关键页，跳过重复页。
    **这一步没有通用脚本可随附**：哪几页算关键页取决于内容，只能照 `pdfdiff.py` 报出的新增页范围人工指定。
    建议把这个脚本固定放在 `<学科目录>/脚本/` 下，下次只改常量和页表。
