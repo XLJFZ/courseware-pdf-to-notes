@@ -93,6 +93,20 @@ class LinkTests(unittest.TestCase):
         self.write("Target.md")
         self.assertEqual(self.run_check().returncode, 1)
 
+    def test_embedded_note_without_extension(self):
+        self.write("folder/Index.md", "![[./Target#Heading]]")
+        self.write("folder/Target.md", "# Heading")
+        self.assertEqual(self.run_check().returncode, 0)
+
+    def test_embedded_note_wrong_directory(self):
+        self.write("Index.md", "![[missing/Target.md]]")
+        self.write("Target.md")
+        self.assertEqual(self.run_check().returncode, 1)
+
+    def test_non_markdown_input(self):
+        self.write("input.txt")
+        self.assertNotEqual(self.run_check("--notes", "input.txt").returncode, 0)
+
     def test_explicit_and_relative_paths(self):
         self.write("folder/Index.md", "[[folder/Target]] [[./Target]] [[../Other]]")
         self.write("folder/Target.md")
