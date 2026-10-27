@@ -2,10 +2,10 @@
 # -*- coding: utf-8 -*-
 """校验 Obsidian 笔记里的 ![[附件嵌入]] 与 [[wikilink]] 能否解析。
 
-规则（Obsidian 的实际行为）：
+校验规则（带路径的笔记采用严格检查，不模拟 Obsidian 的全部回退行为）：
   * 附件嵌入 `![[assets/xxx.png]]` 按「后缀匹配」解析——只要 vault 里有唯一一个
     以该路径结尾的文件即命中；命中多个或不命中都会解析失败。
-  * wikilink `[[笔记名]]` 按「文件名（不含扩展名）唯一」解析。
+  * wikilink 有目录时核对路径；纯文件名检查存在性，同名目标提示歧义。
 
 为什么要校验：笔记改名 / 挪目录后，链接会静默失效，Obsidian 只在点开时才发现。
 改完笔记跑一次，比人工翻安全。
@@ -26,6 +26,7 @@
 """
 import argparse
 import os
+import posixpath
 import re
 import sys
 
@@ -45,7 +46,7 @@ ATTACH_EXTS = {
 def list_md(path):
     path = os.path.abspath(path)
     if os.path.isfile(path):
-        return [path]
+        return [path] if path.lower().endswith(".md") else []
     out = []
     for dp, _dn, fn in os.walk(path):
         out += [os.path.join(dp, f) for f in fn if f.lower().endswith(".md")]
@@ -121,15 +122,18 @@ def main():
 
     # 全 vault 的 md 文件名集合（wikilink 解析用）
     note_names = set()
+    note_paths = []
     # 全 vault 的相对路径（附件后缀匹配用）
     all_rel = []
     for dp, _dn, fn in os.walk(vault):
+        _dn[:] = [d for d in _dn if d != ".trash"]
         for f in fn:
             p = os.path.join(dp, f)
             rel = os.path.relpath(p, vault).replace("\\", "/")
             all_rel.append(rel)
             if f.lower().endswith(".md"):
                 note_names.add(os.path.splitext(f)[0])
+                note_paths.append(rel[:-3])
 
     def resolves_suffix(linkpath):
         """三态返回，模拟 Obsidian 的解析顺序。
@@ -153,7 +157,13 @@ def main():
     if args.notes:
         targets = []
         for n in args.notes:
-            targets += list_md(n if os.path.isabs(n) else os.path.join(vault, n))
+            path = n if os.path.isabs(n) else os.path.join(vault, n)
+            if not os.path.exists(path):
+                ap.error("笔记路径不存在: %s" % n)
+            found = list_md(path)
+            if not found:
+                ap.error("笔记路径中没有 Markdown 笔记: %s" % n)
+            targets += found
     else:
         targets = list_md(vault)
     targets = sorted(set(targets))
@@ -162,6 +172,9 @@ def main():
     targets = [f for f in targets
                if not any(x and x in os.path.relpath(f, vault).replace("\\", "/")
                           for x in excludes)]
+
+    if not targets:
+        ap.error("没有可校验的 Markdown 笔记（检查路径及排除条件）")
 
     # 正则：[^\]|#] 到 | # 为止；表格里为转义写成 `\|`，故捕获后要 rstrip("\\")
     emb_re = re.compile(r"!\[\[([^\]|#]+)")
@@ -176,6 +189,21 @@ def main():
         elif st == "stale":
             warns.append("STALE PATH        %s:%d -> %s（文件存在但路径已过期）" % (name, line, t))
         return st
+
+    def check_note(kind, name, line, t):
+        # 普通链接与嵌入笔记共享路径规则；只剥 .md，保留版本号中的点。
+        target = t.replace("\\", "/")
+        target = target[:-3] if target.lower().endswith(".md") else target
+        if "/" in target:
+            relative = posixpath.normpath(posixpath.join(posixpath.dirname(name), target))
+            if target not in note_paths and relative not in note_paths:
+                problems.append("%s UNRESOLVED   %s:%d -> %s" % (kind, name, line, t))
+        else:
+            hits = [p for p in note_paths if p.rsplit("/", 1)[-1] == target]
+            if not hits:
+                problems.append("%s UNRESOLVED   %s:%d -> %s" % (kind, name, line, t))
+            elif len(hits) > 1:
+                warns.append("AMBIGUOUS LINK    %s:%d -> %s（同名笔记，请写明确路径）" % (name, line, t))
 
     for f in targets:
         if not os.path.isfile(f):
@@ -196,7 +224,10 @@ def main():
             if is_placeholder(t):
                 skipped += 1
                 continue
-            check_attach("EMBED", name, lineno(m.start()), t)
+            if is_attachment(t):
+                check_attach("EMBED", name, lineno(m.start()), t)
+            else:
+                check_note("EMBED", name, lineno(m.start()), t)
         for m in lnk_re.finditer(text):
             t = clean_target(m.group(1))
             if not t:
@@ -208,12 +239,7 @@ def main():
                 # 普通 wikilink 指向附件（`[[附件/x.pdf]]`）：校验文件在不在，不查笔记名
                 check_attach("ATTACH", name, lineno(m.start()), t)
                 continue
-            # 只剥 `.md`，绝不能用 splitext——笔记名本身常带点号（`... v0.1`），
-            # splitext 会把 `.1` 当扩展名剥掉，导致整类链接被误报。
-            bn = os.path.basename(t)
-            base = bn[:-3] if bn.lower().endswith(".md") else bn
-            if base not in note_names:
-                problems.append("LINK UNRESOLVED   %s:%d -> %s" % (name, lineno(m.start()), t))
+            check_note("LINK", name, lineno(m.start()), t)
 
     print("checked notes: %d" % checked)
     print("vault md files: %d | vault files: %d" % (len(note_names), len(all_rel)))
